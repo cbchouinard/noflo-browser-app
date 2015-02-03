@@ -464,17 +464,17 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   };
 
   // An internal function for creating assigner functions.
-  var createAssigner = function(keysFunc) {
+  var createAssigner = function(keysFunc, undefinedOnly) {
     return function(obj) {
       var length = arguments.length;
       if (length < 2 || obj == null) return obj;
-      for (var index = 0; index < length; index++) {
+      for (var index = 1; index < length; index++) {
         var source = arguments[index],
             keys = keysFunc(source),
             l = keys.length;
         for (var i = 0; i < l; i++) {
           var key = keys[i];
-          obj[key] = source[key];
+          if (!undefinedOnly || obj[key] === void 0) obj[key] = source[key];
         }
       }
       return obj;
@@ -491,6 +491,15 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     return result;
   };
 
+  // Helper for collection methods to determine whether a collection
+  // should be iterated as an array or as an object
+  // Related: http://people.mozilla.org/~jorendorff/es6-draft.html#sec-tolength
+  var MAX_ARRAY_INDEX = Math.pow(2, 53) - 1;
+  var isArrayLike = function(collection) {
+    var length = collection && collection.length;
+    return typeof length == 'number' && length >= 0 && length <= MAX_ARRAY_INDEX;
+  };
+
   // Collection Functions
   // --------------------
 
@@ -501,7 +510,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     if (obj == null) return obj;
     iteratee = optimizeCb(iteratee, context);
     var i, length = obj.length;
-    if (length === +length) {
+    if (isArrayLike(obj)) {
       for (i = 0; i < length; i++) {
         iteratee(obj[i], i, obj);
       }
@@ -518,7 +527,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   _.map = _.collect = function(obj, iteratee, context) {
     if (obj == null) return [];
     iteratee = cb(iteratee, context);
-    var keys = obj.length !== +obj.length && _.keys(obj),
+    var keys = !isArrayLike(obj) && _.keys(obj),
         length = (keys || obj).length,
         results = Array(length),
         currentKey;
@@ -529,40 +538,39 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     return results;
   };
 
+  // Create a reducing function iterating left or right.
+  function createReduce(dir) {
+    // Optimized iterator function as using arguments.length
+    // in the main function will deoptimize the, see #1991.
+    function iterator(obj, iteratee, memo, keys, index, length) {
+      for (; index >= 0 && index < length; index += dir) {
+        var currentKey = keys ? keys[index] : index;
+        memo = iteratee(memo, obj[currentKey], currentKey, obj);
+      }
+      return memo;
+    }
+
+    return function(obj, iteratee, memo, context) {
+      if (obj == null) return memo;
+      iteratee = optimizeCb(iteratee, context, 4);
+      var keys = !isArrayLike(obj) && _.keys(obj),
+          length = (keys || obj).length,
+          index = dir > 0 ? 0 : length - 1;
+      // Determine the initial value if none is provided.
+      if (arguments.length < 3) {
+        memo = obj[keys ? keys[index] : index];
+        index += dir;
+      }
+      return iterator(obj, iteratee, memo, keys, index, length);
+    };
+  }
+
   // **Reduce** builds up a single result from a list of values, aka `inject`,
   // or `foldl`.
-  _.reduce = _.foldl = _.inject = function(obj, iteratee, memo, context) {
-    if (obj == null) obj = [];
-    iteratee = optimizeCb(iteratee, context, 4);
-    var keys = obj.length !== +obj.length && _.keys(obj),
-        length = (keys || obj).length,
-        index = 0, currentKey;
-    if (arguments.length < 3) {
-      memo = obj[keys ? keys[index++] : index++];
-    }
-    for (; index < length; index++) {
-      currentKey = keys ? keys[index] : index;
-      memo = iteratee(memo, obj[currentKey], currentKey, obj);
-    }
-    return memo;
-  };
+  _.reduce = _.foldl = _.inject = createReduce(1);
 
   // The right-associative version of reduce, also known as `foldr`.
-  _.reduceRight = _.foldr = function(obj, iteratee, memo, context) {
-    if (obj == null) obj = [];
-    iteratee = optimizeCb(iteratee, context, 4);
-    var keys = obj.length !== + obj.length && _.keys(obj),
-        index = (keys || obj).length,
-        currentKey;
-    if (arguments.length < 3) {
-      memo = obj[keys ? keys[--index] : --index];
-    }
-    while (index-- > 0) {
-      currentKey = keys ? keys[index] : index;
-      memo = iteratee(memo, obj[currentKey], currentKey, obj);
-    }
-    return memo;
-  };
+  _.reduceRight = _.foldr = createReduce(-1);
 
   // **Transform** is an alternative to reduce that transforms `obj` to a new
   // `accumulator` object.
@@ -592,7 +600,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   // Return the first value which passes a truth test. Aliased as `detect`.
   _.find = _.detect = function(obj, predicate, context) {
     var key;
-    if (obj.length === +obj.length) {
+    if (isArrayLike(obj)) {
       key = _.findIndex(obj, predicate, context);
     } else {
       key = _.findKey(obj, predicate, context);
@@ -622,7 +630,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   _.every = _.all = function(obj, predicate, context) {
     if (obj == null) return true;
     predicate = cb(predicate, context);
-    var keys = obj.length !== +obj.length && _.keys(obj),
+    var keys = !isArrayLike(obj) && _.keys(obj),
         length = (keys || obj).length,
         index, currentKey;
     for (index = 0; index < length; index++) {
@@ -637,7 +645,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   _.some = _.any = function(obj, predicate, context) {
     if (obj == null) return false;
     predicate = cb(predicate, context);
-    var keys = obj.length !== +obj.length && _.keys(obj),
+    var keys = !isArrayLike(obj) && _.keys(obj),
         length = (keys || obj).length,
         index, currentKey;
     for (index = 0; index < length; index++) {
@@ -651,7 +659,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   // Aliased as `includes` and `include`.
   _.contains = _.includes = _.include = function(obj, target, fromIndex) {
     if (obj == null) return false;
-    if (obj.length !== +obj.length) obj = _.values(obj);
+    if (!isArrayLike(obj)) obj = _.values(obj);
     return _.indexOf(obj, target, typeof fromIndex == 'number' && fromIndex) >= 0;
   };
 
@@ -660,7 +668,8 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     var args = slice.call(arguments, 2);
     var isFunc = _.isFunction(method);
     return _.map(obj, function(value) {
-      return (isFunc ? method : value[method]).apply(value, args);
+      var func = isFunc ? method : value[method];
+      return func == null ? func : func.apply(value, args);
     });
   };
 
@@ -686,7 +695,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     var result = -Infinity, lastComputed = -Infinity,
         value, computed;
     if (iteratee == null && obj != null) {
-      obj = obj.length === +obj.length ? obj : _.values(obj);
+      obj = isArrayLike(obj) ? obj : _.values(obj);
       for (var i = 0, length = obj.length; i < length; i++) {
         value = obj[i];
         if (value > result) {
@@ -711,7 +720,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     var result = Infinity, lastComputed = Infinity,
         value, computed;
     if (iteratee == null && obj != null) {
-      obj = obj.length === +obj.length ? obj : _.values(obj);
+      obj = isArrayLike(obj) ? obj : _.values(obj);
       for (var i = 0, length = obj.length; i < length; i++) {
         value = obj[i];
         if (value < result) {
@@ -734,7 +743,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   // Shuffle a collection, using the modern version of the
   // [Fisher-Yates shuffle](http://en.wikipedia.org/wiki/Fisher–Yates_shuffle).
   _.shuffle = function(obj) {
-    var set = obj && obj.length === +obj.length ? obj : _.values(obj);
+    var set = isArrayLike(obj) ? obj : _.values(obj);
     var length = set.length;
     var shuffled = Array(length);
     for (var index = 0, rand; index < length; index++) {
@@ -750,7 +759,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   // The internal `guard` argument allows it to work with `map`.
   _.sample = function(obj, n, guard) {
     if (n == null || guard) {
-      if (obj.length !== +obj.length) obj = _.values(obj);
+      if (!isArrayLike(obj)) obj = _.values(obj);
       return obj[_.random(obj.length - 1)];
     }
     return _.shuffle(obj).slice(0, Math.max(0, n));
@@ -766,7 +775,13 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
         criteria: iteratee(value, index, list)
       };
     }).sort(function(left, right) {
-      return _.comparator(left.criteria, right.criteria) || left.index - right.index;
+      var a = left.criteria;
+      var b = right.criteria;
+      if (a !== b) {
+        if (a > b || a === void 0) return 1;
+        if (a < b || b === void 0) return -1;
+      }
+      return left.index - right.index;
     }), 'value');
   };
 
@@ -806,14 +821,14 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   _.toArray = function(obj) {
     if (!obj) return [];
     if (_.isArray(obj)) return slice.call(obj);
-    if (obj.length === +obj.length) return _.map(obj, _.identity);
+    if (isArrayLike(obj)) return _.map(obj, _.identity);
     return _.values(obj);
   };
 
   // Return the number of elements in an object.
   _.size = function(obj) {
     if (obj == null) return 0;
-    return obj.length === +obj.length ? obj.length : _.keys(obj).length;
+    return isArrayLike(obj) ? obj.length : _.keys(obj).length;
   };
 
   // Split a collection into two arrays: one whose elements all satisfy the given
@@ -873,7 +888,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     var output = [], idx = 0, value;
     for (var i = startIndex || 0, length = input && input.length; i < length; i++) {
       value = input[i];
-      if (value && value.length >= 0 && (_.isArray(value) || _.isArguments(value))) {
+      if (isArrayLike(value) && (_.isArray(value) || _.isArguments(value))) {
         //flatten current level of array or arguments object
         if (!shallow) value = flatten(value, shallow, strict);
         var j = 0, len = value.length;
@@ -963,20 +978,20 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
 
   // Zip together multiple lists into a single array -- elements that share
   // an index go together.
-  _.zip = function(array) {
-    if (array == null) return [];
-    var length = _.max(arguments, 'length').length;
-    var results = Array(length);
-    while (length-- > 0) {
-      results[length] = _.pluck(arguments, length);
-    }
-    return results;
+  _.zip = function() {
+    return _.unzip(arguments);
   };
 
   // Complement of _.zip. Unzip accepts an array of arrays and groups
   // each array's elements on shared indices
   _.unzip = function(array) {
-    return _.zip.apply(null, array);
+    var length = array && _.max(array, 'length').length || 0;
+    var result = Array(length);
+
+    for (var index = 0; index < length; index++) {
+      result[index] = _.pluck(array, index);
+    }
+    return result;
   };
 
   // Converts lists into objects. Pass either a single array of `[key, value]`
@@ -1007,6 +1022,9 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
       i = _.sortedIndex(array, item);
       return array[i] === item ? i : -1;
     }
+    if (item !== item) {
+      return _.findIndex(slice.call(array, i), _.isNaN);
+    }
     for (; i < length; i++) if (array[i] === item) return i;
     return -1;
   };
@@ -1016,19 +1034,30 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     if (typeof from == 'number') {
       idx = from < 0 ? idx + from + 1 : Math.min(idx, from + 1);
     }
+    if (item !== item) {
+      return _.findLastIndex(slice.call(array, 0, idx), _.isNaN);
+    }
     while (--idx >= 0) if (array[idx] === item) return idx;
     return -1;
   };
 
+  // Generator function to create the findIndex and findLastIndex functions
+  function createIndexFinder(dir) {
+    return function(array, predicate, context) {
+      predicate = cb(predicate, context);
+      var length = array != null && array.length;
+      var index = dir > 0 ? 0 : length - 1;
+      for (; index >= 0 && index < length; index += dir) {
+        if (predicate(array[index], index, array)) return index;
+      }
+      return -1;
+    };
+  }
+
   // Returns the first index on an array-like that passes a predicate test
-  _.findIndex = function(array, predicate, context) {
-    predicate = cb(predicate, context);
-    var length = array != null ? array.length : 0;
-    for (var i = 0; i < length; i++) {
-      if (predicate(array[i], i, array)) return i;
-    }
-    return -1;
-  };
+  _.findIndex = createIndexFinder(1);
+
+  _.findLastIndex = createIndexFinder(-1);
 
   // Use a comparator function to figure out the smallest index at which
   // an object should be inserted so as to maintain order. Uses binary search.
@@ -1038,7 +1067,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     var low = 0, high = array.length;
     while (low < high) {
       var mid = Math.floor((low + high) / 2);
-      if (_.comparator(iteratee(array[mid]), value) < 0) low = mid + 1; else high = mid;
+      if (iteratee(array[mid]) < value) low = mid + 1; else high = mid;
     }
     return low;
   };
@@ -1094,10 +1123,10 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   _.partial = function(func) {
     var boundArgs = slice.call(arguments, 1);
     return function bound() {
-      var position = 0;
-      var args = boundArgs.slice();
-      for (var i = 0, length = args.length; i < length; i++) {
-        if (args[i] === _) args[i] = arguments[position++];
+      var position = 0, length = boundArgs.length;
+      var args = Array(length);
+      for (var i = 0; i < length; i++) {
+        args[i] = boundArgs[i] === _ ? arguments[position++] : boundArgs[i];
       }
       while (position < arguments.length) args.push(arguments[position++]);
       return executeBound(func, bound, this, this, args);
@@ -1404,16 +1433,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   };
 
   // Fill in a given object with default properties.
-  _.defaults = function(obj) {
-    if (!_.isObject(obj)) return obj;
-    for (var i = 1, length = arguments.length; i < length; i++) {
-      var source = arguments[i];
-      for (var prop in source) {
-        if (obj[prop] === void 0) obj[prop] = source[prop];
-      }
-    }
-    return obj;
-  };
+  _.defaults = createAssigner(_.keysIn, true);
 
   // Creates an object that inherits from the given prototype object.
   // If additional properties are provided then they will be added to the
@@ -1488,6 +1508,11 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     }
     // Assume equality for cyclic structures. The algorithm for detecting cyclic
     // structures is adapted from ES 5.1 section 15.12.3, abstract operation `JO`.
+    
+    // Initializing stack of traversed objects.
+    // It's done here since we only need them for objects and arrays comparison.
+    aStack = aStack || [];
+    bStack = bStack || [];
     var length = aStack.length;
     while (length--) {
       // Linear search. Performance is inversely proportional to the number of
@@ -1528,16 +1553,15 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
 
   // Perform a deep comparison to check if two objects are equal.
   _.isEqual = function(a, b) {
-    return eq(a, b, [], []);
+    return eq(a, b);
   };
 
   // Is a given array, string, or object empty?
   // An "empty" object has no enumerable own-properties.
   _.isEmpty = function(obj) {
     if (obj == null) return true;
-    if (_.isArray(obj) || _.isString(obj) || _.isArguments(obj)) return obj.length === 0;
-    for (var key in obj) if (_.has(obj, key)) return false;
-    return true;
+    if (isArrayLike(obj) && (_.isArray(obj) || _.isString(obj) || _.isArguments(obj))) return obj.length === 0;
+    return _.keys(obj).length === 0;
   };
 
   // Is a given value a DOM element?
@@ -1572,8 +1596,8 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     };
   }
 
-  // Optimize `isFunction` if appropriate. Work around an IE 11 bug (#1621).
-  // Work around a Safari 8 bug (#1929)
+  // Optimize `isFunction` if appropriate. Work around some typeof bugs in old v8,
+  // IE 11 (#1621), and in Safari 8 (#1929).
   if (typeof /./ != 'function' && typeof Int8Array != 'object') {
     _.isFunction = function(obj) {
       return typeof obj == 'function' || false;
@@ -1660,18 +1684,6 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
       }
       return true;
     };
-  };
-
-  // Default internal comparator for determining whether a is greater (1),
-  // equal (0) or less than (-1) some object b
-  _.comparator = function(a, b) {
-    if (a === b) return 0;
-    var isAComparable = a >= a, isBComparable = b >= b;
-    if (isAComparable || isBComparable) {
-      if (isAComparable && !isBComparable) return -1;
-      if (isBComparable && !isAComparable) return 1;
-    }
-    return a > b ? 1 : (b > a) ? -1 : 0;
   };
 
   // Run a function **n** times.
@@ -1887,6 +1899,14 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   // Extracts the result from a wrapped and chained object.
   _.prototype.value = function() {
     return this._wrapped;
+  };
+
+  // Provide unwrapping proxy for some methods used in engine operations
+  // such as arithmetic and JSON stringification.
+  _.prototype.valueOf = _.prototype.toJSON = _.prototype.value;
+  
+  _.prototype.toString = function() {
+    return '' + this._wrapped;
   };
 
   // AMD registration happens at the end for compatibility with AMD loaders
@@ -3690,8 +3710,8 @@ module.exports = JSON.parse('{"name":"noflo","description":"Flow-Based Programmi
 });
 require.register("noflo-noflo/src/lib/Graph.js", function(exports, require, module){
 var EventEmitter, Graph, clone, mergeResolveTheirsNaive, platform, resetGraph,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 EventEmitter = require('events').EventEmitter;
 
@@ -3720,8 +3740,8 @@ Graph = (function(_super) {
 
   Graph.prototype.groups = [];
 
-  function Graph(name) {
-    this.name = name != null ? name : '';
+  function Graph(_at_name) {
+    this.name = _at_name != null ? _at_name : '';
     this.properties = {};
     this.nodes = [];
     this.edges = [];
@@ -4629,7 +4649,7 @@ Graph = (function(_super) {
   Graph.prototype.save = function(file, success) {
     var json;
     json = JSON.stringify(this.toJSON(), null, 4);
-    return require('fs').writeFile("" + file + ".json", json, "utf-8", function(err, data) {
+    return require('fs').writeFile(file + ".json", json, "utf-8", function(err, data) {
       if (err) {
         throw err;
       }
@@ -4912,8 +4932,8 @@ exports.mergeResolveTheirs = mergeResolveTheirsNaive;
 });
 require.register("noflo-noflo/src/lib/InternalSocket.js", function(exports, require, module){
 var EventEmitter, InternalSocket,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 EventEmitter = require('events').EventEmitter;
 
@@ -5002,21 +5022,21 @@ InternalSocket = (function(_super) {
   InternalSocket.prototype.getId = function() {
     var fromStr, toStr;
     fromStr = function(from) {
-      return "" + from.process.id + "() " + (from.port.toUpperCase());
+      return from.process.id + "() " + (from.port.toUpperCase());
     };
     toStr = function(to) {
-      return "" + (to.port.toUpperCase()) + " " + to.process.id + "()";
+      return (to.port.toUpperCase()) + " " + to.process.id + "()";
     };
     if (!(this.from || this.to)) {
       return "UNDEFINED";
     }
     if (this.from && !this.to) {
-      return "" + (fromStr(this.from)) + " -> ANON";
+      return (fromStr(this.from)) + " -> ANON";
     }
     if (!this.from) {
       return "DATA -> " + (toStr(this.to));
     }
-    return "" + (fromStr(this.from)) + " -> " + (toStr(this.to));
+    return (fromStr(this.from)) + " -> " + (toStr(this.to));
   };
 
   return InternalSocket;
@@ -5032,8 +5052,8 @@ exports.createSocket = function() {
 });
 require.register("noflo-noflo/src/lib/BasePort.js", function(exports, require, module){
 var BasePort, EventEmitter, validTypes,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 EventEmitter = require('events').EventEmitter;
 
@@ -5075,7 +5095,7 @@ BasePort = (function(_super) {
     if (!(this.node && this.name)) {
       return 'Port';
     }
-    return "" + this.node + " " + (this.name.toUpperCase());
+    return this.node + " " + (this.name.toUpperCase());
   };
 
   BasePort.prototype.getDataType = function() {
@@ -5176,10 +5196,10 @@ BasePort = (function(_super) {
     }
     if (this.isAddressable()) {
       if (socketId === null) {
-        throw new Error("" + (this.getId()) + ": Socket ID required");
+        throw new Error((this.getId()) + ": Socket ID required");
       }
       if (!this.sockets[socketId]) {
-        throw new Error("" + (this.getId()) + ": Socket " + socketId + " not available");
+        throw new Error((this.getId()) + ": Socket " + socketId + " not available");
       }
       return this.sockets[socketId].isConnected();
     }
@@ -5210,8 +5230,8 @@ module.exports = BasePort;
 });
 require.register("noflo-noflo/src/lib/InPort.js", function(exports, require, module){
 var BasePort, InPort,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 BasePort = require('./BasePort');
 
@@ -5329,7 +5349,7 @@ InPort = (function(_super) {
       return;
     }
     if (this.options.values.indexOf(data) === -1) {
-      throw new Error('Invalid data received');
+      throw new Error("Invalid data='" + data + "' received, not in [" + this.options.values + "]");
     }
   };
 
@@ -5360,8 +5380,8 @@ module.exports = InPort;
 });
 require.register("noflo-noflo/src/lib/OutPort.js", function(exports, require, module){
 var BasePort, OutPort,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 BasePort = require('./BasePort');
 
@@ -5484,14 +5504,14 @@ OutPort = (function(_super) {
 
   OutPort.prototype.checkRequired = function(sockets) {
     if (sockets.length === 0 && this.isRequired()) {
-      throw new Error("" + (this.getId()) + ": No connections available");
+      throw new Error((this.getId()) + ": No connections available");
     }
   };
 
   OutPort.prototype.getSockets = function(socketId) {
     if (this.isAddressable()) {
       if (socketId === null) {
-        throw new Error("" + (this.getId()) + " Socket ID required");
+        throw new Error((this.getId()) + " Socket ID required");
       }
       if (!this.sockets[socketId]) {
         return [];
@@ -5517,8 +5537,8 @@ module.exports = OutPort;
 });
 require.register("noflo-noflo/src/lib/Ports.js", function(exports, require, module){
 var EventEmitter, InPort, InPorts, OutPort, OutPorts, Ports,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 EventEmitter = require('events').EventEmitter;
 
@@ -5653,8 +5673,8 @@ exports.OutPorts = OutPorts = (function(_super) {
 });
 require.register("noflo-noflo/src/lib/Port.js", function(exports, require, module){
 var EventEmitter, Port,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 EventEmitter = require('events').EventEmitter;
 
@@ -5665,8 +5685,8 @@ Port = (function(_super) {
 
   Port.prototype.required = true;
 
-  function Port(type) {
-    this.type = type;
+  function Port(_at_type) {
+    this.type = _at_type;
     if (!this.type) {
       this.type = 'all';
     }
@@ -5683,7 +5703,7 @@ Port = (function(_super) {
     if (!(this.node && this.name)) {
       return 'Port';
     }
-    return "" + this.node + " " + (this.name.toUpperCase());
+    return this.node + " " + (this.name.toUpperCase());
   };
 
   Port.prototype.getDataType = function() {
@@ -5738,7 +5758,7 @@ Port = (function(_super) {
   Port.prototype.connect = function() {
     var socket, _i, _len, _ref, _results;
     if (this.sockets.length === 0) {
-      throw new Error("" + (this.getId()) + ": No connections available");
+      throw new Error((this.getId()) + ": No connections available");
     }
     _ref = this.sockets;
     _results = [];
@@ -5751,7 +5771,7 @@ Port = (function(_super) {
 
   Port.prototype.beginGroup = function(group) {
     if (this.sockets.length === 0) {
-      throw new Error("" + (this.getId()) + ": No connections available");
+      throw new Error((this.getId()) + ": No connections available");
     }
     return this.sockets.forEach(function(socket) {
       if (socket.isConnected()) {
@@ -5766,7 +5786,7 @@ Port = (function(_super) {
 
   Port.prototype.send = function(data) {
     if (this.sockets.length === 0) {
-      throw new Error("" + (this.getId()) + ": No connections available");
+      throw new Error((this.getId()) + ": No connections available");
     }
     return this.sockets.forEach(function(socket) {
       if (socket.isConnected()) {
@@ -5782,7 +5802,7 @@ Port = (function(_super) {
   Port.prototype.endGroup = function() {
     var socket, _i, _len, _ref, _results;
     if (this.sockets.length === 0) {
-      throw new Error("" + (this.getId()) + ": No connections available");
+      throw new Error((this.getId()) + ": No connections available");
     }
     _ref = this.sockets;
     _results = [];
@@ -5796,7 +5816,7 @@ Port = (function(_super) {
   Port.prototype.disconnect = function() {
     var socket, _i, _len, _ref, _results;
     if (this.sockets.length === 0) {
-      throw new Error("" + (this.getId()) + ": No connections available");
+      throw new Error((this.getId()) + ": No connections available");
     }
     _ref = this.sockets;
     _results = [];
@@ -5883,16 +5903,16 @@ exports.Port = Port;
 });
 require.register("noflo-noflo/src/lib/ArrayPort.js", function(exports, require, module){
 var ArrayPort, port,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 port = require("./Port");
 
 ArrayPort = (function(_super) {
   __extends(ArrayPort, _super);
 
-  function ArrayPort(type) {
-    this.type = type;
+  function ArrayPort(_at_type) {
+    this.type = _at_type;
     ArrayPort.__super__.constructor.call(this, this.type);
   }
 
@@ -5913,7 +5933,7 @@ ArrayPort = (function(_super) {
     }
     if (socketId === null) {
       if (!this.sockets.length) {
-        throw new Error("" + (this.getId()) + ": No connections available");
+        throw new Error((this.getId()) + ": No connections available");
       }
       this.sockets.forEach(function(socket) {
         if (!socket) {
@@ -5924,7 +5944,7 @@ ArrayPort = (function(_super) {
       return;
     }
     if (!this.sockets[socketId]) {
-      throw new Error("" + (this.getId()) + ": No connection '" + socketId + "' available");
+      throw new Error((this.getId()) + ": No connection '" + socketId + "' available");
     }
     return this.sockets[socketId].connect();
   };
@@ -5935,7 +5955,7 @@ ArrayPort = (function(_super) {
     }
     if (socketId === null) {
       if (!this.sockets.length) {
-        throw new Error("" + (this.getId()) + ": No connections available");
+        throw new Error((this.getId()) + ": No connections available");
       }
       this.sockets.forEach((function(_this) {
         return function(socket, index) {
@@ -5948,7 +5968,7 @@ ArrayPort = (function(_super) {
       return;
     }
     if (!this.sockets[socketId]) {
-      throw new Error("" + (this.getId()) + ": No connection '" + socketId + "' available");
+      throw new Error((this.getId()) + ": No connection '" + socketId + "' available");
     }
     if (this.isConnected(socketId)) {
       return this.sockets[socketId].beginGroup(group);
@@ -5967,7 +5987,7 @@ ArrayPort = (function(_super) {
     }
     if (socketId === null) {
       if (!this.sockets.length) {
-        throw new Error("" + (this.getId()) + ": No connections available");
+        throw new Error((this.getId()) + ": No connections available");
       }
       this.sockets.forEach((function(_this) {
         return function(socket, index) {
@@ -5980,7 +6000,7 @@ ArrayPort = (function(_super) {
       return;
     }
     if (!this.sockets[socketId]) {
-      throw new Error("" + (this.getId()) + ": No connection '" + socketId + "' available");
+      throw new Error((this.getId()) + ": No connection '" + socketId + "' available");
     }
     if (this.isConnected(socketId)) {
       return this.sockets[socketId].send(data);
@@ -5999,7 +6019,7 @@ ArrayPort = (function(_super) {
     }
     if (socketId === null) {
       if (!this.sockets.length) {
-        throw new Error("" + (this.getId()) + ": No connections available");
+        throw new Error((this.getId()) + ": No connections available");
       }
       this.sockets.forEach((function(_this) {
         return function(socket, index) {
@@ -6012,7 +6032,7 @@ ArrayPort = (function(_super) {
       return;
     }
     if (!this.sockets[socketId]) {
-      throw new Error("" + (this.getId()) + ": No connection '" + socketId + "' available");
+      throw new Error((this.getId()) + ": No connection '" + socketId + "' available");
     }
     return this.sockets[socketId].endGroup();
   };
@@ -6024,7 +6044,7 @@ ArrayPort = (function(_super) {
     }
     if (socketId === null) {
       if (!this.sockets.length) {
-        throw new Error("" + (this.getId()) + ": No connections available");
+        throw new Error((this.getId()) + ": No connections available");
       }
       _ref = this.sockets;
       for (_i = 0, _len = _ref.length; _i < _len; _i++) {
@@ -6099,8 +6119,8 @@ exports.ArrayPort = ArrayPort;
 require.register("noflo-noflo/src/lib/Component.js", function(exports, require, module){
 var Component, EventEmitter, ports,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 EventEmitter = require('events').EventEmitter;
 
@@ -6150,8 +6170,8 @@ Component = (function(_super) {
     return false;
   };
 
-  Component.prototype.setIcon = function(icon) {
-    this.icon = icon;
+  Component.prototype.setIcon = function(_at_icon) {
+    this.icon = _at_icon;
     return this.emit('icon', this.icon);
   };
 
@@ -6205,8 +6225,8 @@ exports.Component = Component;
 });
 require.register("noflo-noflo/src/lib/AsyncComponent.js", function(exports, require, module){
 var AsyncComponent, component, port,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 port = require("./Port");
 
@@ -6215,10 +6235,10 @@ component = require("./Component");
 AsyncComponent = (function(_super) {
   __extends(AsyncComponent, _super);
 
-  function AsyncComponent(inPortName, outPortName, errPortName) {
-    this.inPortName = inPortName != null ? inPortName : "in";
-    this.outPortName = outPortName != null ? outPortName : "out";
-    this.errPortName = errPortName != null ? errPortName : "error";
+  function AsyncComponent(_at_inPortName, _at_outPortName, _at_errPortName) {
+    this.inPortName = _at_inPortName != null ? _at_inPortName : "in";
+    this.outPortName = _at_outPortName != null ? _at_outPortName : "out";
+    this.errPortName = _at_errPortName != null ? _at_errPortName : "error";
     if (!this.inPorts[this.inPortName]) {
       throw new Error("no inPort named '" + this.inPortName + "'");
     }
@@ -6390,8 +6410,8 @@ exports.AsyncComponent = AsyncComponent;
 require.register("noflo-noflo/src/lib/LoggingComponent.js", function(exports, require, module){
 var Component, Port, util,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 Component = require("./Component").Component;
 
@@ -6439,8 +6459,8 @@ exports.LoggingComponent = (function(_super) {
 });
 require.register("noflo-noflo/src/lib/ComponentLoader.js", function(exports, require, module){
 var ComponentLoader, EventEmitter, internalSocket, nofloGraph, utils,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 internalSocket = require('./InternalSocket');
 
@@ -6453,8 +6473,8 @@ EventEmitter = require('events').EventEmitter;
 ComponentLoader = (function(_super) {
   __extends(ComponentLoader, _super);
 
-  function ComponentLoader(baseDir) {
-    this.baseDir = baseDir;
+  function ComponentLoader(_at_baseDir) {
+    this.baseDir = _at_baseDir;
     this.components = null;
     this.checked = [];
     this.revalidate = false;
@@ -6688,7 +6708,7 @@ ComponentLoader = (function(_super) {
   ComponentLoader.prototype.normalizeName = function(packageId, name) {
     var fullName, prefix;
     prefix = this.getModulePrefix(packageId);
-    fullName = "" + prefix + "/" + name;
+    fullName = prefix + "/" + name;
     if (!packageId) {
       fullName = name;
     }
@@ -6916,8 +6936,8 @@ exports.saveFile = function(graph, file, callback) {
 });
 require.register("noflo-noflo/src/lib/Network.js", function(exports, require, module){
 var EventEmitter, Network, componentLoader, graph, internalSocket, _,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 _ = require("underscore");
 
@@ -7698,7 +7718,7 @@ exports.Network = Network;
 });
 require.register("noflo-noflo/src/lib/Platform.js", function(exports, require, module){
 exports.isBrowser = function() {
-  if (typeof process !== 'undefined' && process.execPath && process.execPath.indexOf('node') !== -1) {
+  if (typeof process !== 'undefined' && process.execPath && process.execPath.match(/node|iojs/)) {
     return false;
   }
   return true;
@@ -7707,8 +7727,8 @@ exports.isBrowser = function() {
 });
 require.register("noflo-noflo/src/lib/Journal.js", function(exports, require, module){
 var EventEmitter, Journal, JournalStore, MemoryJournalStore, calculateMeta, clone, entryToPrettyString,
-  __hasProp = {}.hasOwnProperty,
   __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; };
 
 EventEmitter = require('events').EventEmitter;
@@ -7720,7 +7740,7 @@ entryToPrettyString = function(entry) {
   a = entry.args;
   switch (entry.cmd) {
     case 'addNode':
-      return "" + a.id + "(" + a.component + ")";
+      return a.id + "(" + a.component + ")";
     case 'removeNode':
       return "DEL " + a.id + "(" + a.component + ")";
     case 'renameNode':
@@ -7728,9 +7748,9 @@ entryToPrettyString = function(entry) {
     case 'changeNode':
       return "META " + a.id;
     case 'addEdge':
-      return "" + a.from.node + " " + a.from.port + " -> " + a.to.port + " " + a.to.node;
+      return a.from.node + " " + a.from.port + " -> " + a.to.port + " " + a.to.node;
     case 'removeEdge':
-      return "" + a.from.node + " " + a.from.port + " -X> " + a.to.port + " " + a.to.node;
+      return a.from.node + " " + a.from.port + " -X> " + a.to.port + " " + a.to.node;
     case 'changeEdge':
       return "META " + a.from.node + " " + a.from.port + " -> " + a.to.port + " " + a.to.node;
     case 'addInitial':
@@ -7791,8 +7811,8 @@ JournalStore = (function(_super) {
 
   JournalStore.prototype.lastRevision = 0;
 
-  function JournalStore(graph) {
-    this.graph = graph;
+  function JournalStore(_at_graph) {
+    this.graph = _at_graph;
     this.lastRevision = 0;
   }
 
@@ -8311,7 +8331,7 @@ Journal = (function(_super) {
   Journal.prototype.save = function(file, success) {
     var json;
     json = JSON.stringify(this.toJSON(), null, 4);
-    return require('fs').writeFile("" + file + ".json", json, "utf-8", function(err, data) {
+    return require('fs').writeFile(file + ".json", json, "utf-8", function(err, data) {
       if (err) {
         throw err;
       }
@@ -9134,8 +9154,8 @@ require.register("noflo-noflo/src/lib/Streams.js", function(exports, require, mo
 var IP, StreamReceiver, StreamSender, Substream;
 
 IP = (function() {
-  function IP(data) {
-    this.data = data;
+  function IP(_at_data) {
+    this.data = _at_data;
   }
 
   IP.prototype.sendTo = function(port) {
@@ -9157,8 +9177,8 @@ IP = (function() {
 exports.IP = IP;
 
 Substream = (function() {
-  function Substream(key) {
-    this.key = key;
+  function Substream(_at_key) {
+    this.key = _at_key;
     this.value = [];
   }
 
@@ -9236,9 +9256,9 @@ Substream = (function() {
 exports.Substream = Substream;
 
 StreamSender = (function() {
-  function StreamSender(port, ordered) {
-    this.port = port;
-    this.ordered = ordered != null ? ordered : false;
+  function StreamSender(_at_port, _at_ordered) {
+    this.port = _at_port;
+    this.ordered = _at_ordered != null ? _at_ordered : false;
     this.q = [];
     this.resetCurrent();
     this.resolved = false;
@@ -9331,10 +9351,10 @@ StreamSender = (function() {
 exports.StreamSender = StreamSender;
 
 StreamReceiver = (function() {
-  function StreamReceiver(port, buffered, process) {
-    this.port = port;
-    this.buffered = buffered != null ? buffered : false;
-    this.process = process != null ? process : null;
+  function StreamReceiver(_at_port, _at_buffered, _at_process) {
+    this.port = _at_port;
+    this.buffered = _at_buffered != null ? _at_buffered : false;
+    this.process = _at_process != null ? _at_process : null;
     this.q = [];
     this.resetCurrent();
     this.port.process = (function(_this) {
@@ -9414,8 +9434,8 @@ exports.StreamReceiver = StreamReceiver;
 });
 require.register("noflo-noflo/src/components/Graph.js", function(exports, require, module){
 var Graph, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 if (typeof process !== 'undefined' && process.execPath && process.execPath.indexOf('node') !== -1) {
   noflo = require("../../lib/NoFlo");
@@ -9426,8 +9446,8 @@ if (typeof process !== 'undefined' && process.execPath && process.execPath.index
 Graph = (function(_super) {
   __extends(Graph, _super);
 
-  function Graph(metadata) {
-    this.metadata = metadata;
+  function Graph(_at_metadata) {
+    this.metadata = _at_metadata;
     this.network = null;
     this.ready = true;
     this.started = false;
@@ -9464,7 +9484,7 @@ Graph = (function(_super) {
       return;
     }
     if (graph.substr(0, 1) !== "/" && graph.substr(1, 1) !== ":" && process && process.cwd) {
-      graph = "" + (process.cwd()) + "/" + graph;
+      graph = (process.cwd()) + "/" + graph;
     }
     return graph = noflo.graph.loadFile(graph, (function(_this) {
       return function(instance) {
@@ -9479,8 +9499,8 @@ Graph = (function(_super) {
     this.icon = graph.properties.icon || this.icon;
     graph.componentLoader = this.loader;
     return noflo.createNetwork(graph, (function(_this) {
-      return function(network) {
-        _this.network = network;
+      return function(_at_network) {
+        _this.network = _at_network;
         _this.emit('network', _this.network);
         return _this.network.connect(function() {
           var name, notReady, process, _ref;
@@ -9671,8 +9691,8 @@ module.exports = JSON.parse('{"name":"noflo-dom","description":"Document Object 
 });
 require.register("noflo-noflo-dom/components/AddClass.js", function(exports, require, module){
 var AddClass, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -9722,8 +9742,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-dom/components/AppendChild.js", function(exports, require, module){
 var AppendChild, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -9780,8 +9800,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-dom/components/CreateElement.js", function(exports, require, module){
 var CreateElement, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -9801,8 +9821,8 @@ CreateElement = (function(_super) {
       element: new noflo.Port('object')
     };
     this.inPorts.tagname.on('data', (function(_this) {
-      return function(tagName) {
-        _this.tagName = tagName;
+      return function(_at_tagName) {
+        _this.tagName = _at_tagName;
         return _this.createElement();
       };
     })(this));
@@ -9814,8 +9834,8 @@ CreateElement = (function(_super) {
       };
     })(this));
     this.inPorts.container.on('data', (function(_this) {
-      return function(container) {
-        _this.container = container;
+      return function(_at_container) {
+        _this.container = _at_container;
         return _this.createElement();
       };
     })(this));
@@ -9854,8 +9874,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-dom/components/CreateFragment.js", function(exports, require, module){
 var CreateFragment, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -9932,8 +9952,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-dom/components/GetElement.js", function(exports, require, module){
 var GetElement, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -10006,8 +10026,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-dom/components/HasClass.js", function(exports, require, module){
 var HasClass, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -10077,8 +10097,8 @@ exports.getComponent = function() {
 require.register("noflo-noflo-dom/components/Listen.js", function(exports, require, module){
 var Listen, noflo,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -10093,9 +10113,11 @@ Listen = (function(_super) {
     this.change = __bind(this.change, this);
     this.element = null;
     this.type = null;
+    this.preventDefault = false;
     this.inPorts = {
       element: new noflo.Port('object'),
-      type: new noflo.Port('string')
+      type: new noflo.Port('string'),
+      preventdefault: new noflo.Port('boolean')
     };
     this.outPorts = {
       element: new noflo.Port('object'),
@@ -10123,6 +10145,11 @@ Listen = (function(_super) {
         }
       };
     })(this));
+    this.inPorts.preventdefault.on('data', (function(_this) {
+      return function(data) {
+        return _this.preventDefault = data;
+      };
+    })(this));
   }
 
   Listen.prototype.unsubscribe = function(element, type) {
@@ -10134,6 +10161,9 @@ Listen = (function(_super) {
   };
 
   Listen.prototype.change = function(event) {
+    if (this.preventDefault) {
+      event.preventDefault();
+    }
     if (this.outPorts.element.isAttached()) {
       this.outPorts.element.send(this.element);
     }
@@ -10153,8 +10183,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-dom/components/ReadHtml.js", function(exports, require, module){
 var ReadHtml, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -10189,8 +10219,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-dom/components/RemoveElement.js", function(exports, require, module){
 var RemoveElement, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -10203,14 +10233,12 @@ RemoveElement = (function(_super) {
     this.inPorts = {
       element: new noflo.Port('object')
     };
-    this.inPorts.element.on('data', (function(_this) {
-      return function(element) {
-        if (!element.parentNode) {
-          return;
-        }
-        return element.parentNode.removeChild(element);
-      };
-    })(this));
+    this.inPorts.element.on('data', function(element) {
+      if (!element.parentNode) {
+        return;
+      }
+      return element.parentNode.removeChild(element);
+    });
   }
 
   return RemoveElement;
@@ -10223,91 +10251,68 @@ exports.getComponent = function() {
 
 });
 require.register("noflo-noflo-dom/components/SetAttribute.js", function(exports, require, module){
-var SetAttribute, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+'use strict';
+var noflo;
 
 noflo = require('noflo');
 
-SetAttribute = (function(_super) {
-  __extends(SetAttribute, _super);
-
-  function SetAttribute() {
-    this.attribute = null;
-    this.value = null;
-    this.element = null;
-    this.inPorts = {
-      element: new noflo.Port('object'),
-      attribute: new noflo.Port('string'),
-      value: new noflo.Port('string')
-    };
-    this.outPorts = {
-      element: new noflo.Port('object')
-    };
-    this.inPorts.element.on('data', (function(_this) {
-      return function(element) {
-        _this.element = element;
-        if (_this.attribute && _this.value) {
-          return _this.setAttribute();
-        }
-      };
-    })(this));
-    this.inPorts.attribute.on('data', (function(_this) {
-      return function(attribute) {
-        _this.attribute = attribute;
-        if (_this.element && _this.value) {
-          return _this.setAttribute();
-        }
-      };
-    })(this));
-    this.inPorts.value.on('data', (function(_this) {
-      return function(value) {
-        _this.value = _this.normalizeValue(value);
-        if (_this.attribute && _this.element) {
-          return _this.setAttribute();
-        }
-      };
-    })(this));
-  }
-
-  SetAttribute.prototype.setAttribute = function() {
-    this.element.setAttribute(this.attribute, this.value);
-    this.value = null;
-    if (this.outPorts.element.isAttached()) {
-      this.outPorts.element.send(this.element);
-      return this.outPorts.element.disconnect();
-    }
-  };
-
-  SetAttribute.prototype.normalizeValue = function(value) {
-    var key, newVal, val;
+exports.getComponent = function() {
+  var c;
+  c = new noflo.Component;
+  c.description = "Set the given attribute on the DOM element to the received value.";
+  c.inPorts.add('element', {
+    datatype: 'object',
+    description: 'The element on which to set the attribute.',
+    required: true
+  });
+  c.inPorts.add('attribute', {
+    datatype: 'string',
+    description: 'The attribute which is set on the DOM element.',
+    required: true
+  });
+  c.inPorts.add('value', {
+    datatype: 'string',
+    description: 'Value of the attribute being set.'
+  });
+  c.outPorts.add('element', {
+    datatype: 'object',
+    description: 'The element that was updated.'
+  });
+  return noflo.helpers.WirePattern(c, {
+    "in": ['element', 'value'],
+    out: ['element'],
+    params: ['attribute'],
+    forwardGroups: true
+  }, function(data, groups, out) {
+    var attr, key, newVal, val, value;
+    attr = c.params.attribute;
+    value = data.value;
     if (typeof value === 'object') {
-      if (toString.call(value) !== '[object Array]') {
+      if (toString.call(value) === '[object Array]') {
+        value = value.join(' ');
+      } else {
         newVal = [];
         for (key in value) {
           val = value[key];
           newVal.push(val);
         }
-        value = newVal;
+        value = newVal.join(' ');
       }
-      return value.join(' ');
     }
-    return value;
-  };
-
-  return SetAttribute;
-
-})(noflo.Component);
-
-exports.getComponent = function() {
-  return new SetAttribute;
+    if (attr === "value") {
+      data.element.value = value;
+    } else {
+      data.element.setAttribute(attr, value);
+    }
+    return out.send(data.element);
+  });
 };
 
 });
 require.register("noflo-noflo-dom/components/WriteHtml.js", function(exports, require, module){
 var WriteHtml, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -10364,8 +10369,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-dom/components/RemoveClass.js", function(exports, require, module){
 var RemoveClass, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -10415,8 +10420,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-dom/components/RequestAnimationFrame.js", function(exports, require, module){
 var RequestAnimationFrame, noflo, requestAnimationFrame,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -10489,8 +10494,8 @@ module.exports = JSON.parse('{"name":"noflo-core","description":"NoFlo Essential
 });
 require.register("noflo-noflo-core/components/Callback.js", function(exports, require, module){
 var Callback, noflo, _,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -10560,8 +10565,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-core/components/DisconnectAfterPacket.js", function(exports, require, module){
 var DisconnectAfterPacket, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -10613,8 +10618,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-core/components/Drop.js", function(exports, require, module){
 var Drop, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -10646,8 +10651,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-core/components/Group.js", function(exports, require, module){
 var Group, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -10734,8 +10739,8 @@ Group = (function(_super) {
       };
     })(this));
     this.inPorts.threshold.on('data', (function(_this) {
-      return function(threshold) {
-        _this.threshold = threshold;
+      return function(_at_threshold) {
+        _this.threshold = _at_threshold;
       };
     })(this));
   }
@@ -10751,8 +10756,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-core/components/Kick.js", function(exports, require, module){
 var Kick, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -10839,8 +10844,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-core/components/Merge.js", function(exports, require, module){
 var Merge, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -10909,8 +10914,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-core/components/Output.js", function(exports, require, module){
 var Output, noflo, util,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -11066,8 +11071,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-core/components/RepeatDelayed.js", function(exports, require, module){
 var RepeatDelayed, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -11098,8 +11103,8 @@ RepeatDelayed = (function(_super) {
       }
     });
     this.inPorts.delay.on('data', (function(_this) {
-      return function(delay) {
-        _this.delay = delay;
+      return function(_at_delay) {
+        _this.delay = _at_delay;
       };
     })(this));
     RepeatDelayed.__super__.constructor.call(this);
@@ -11138,8 +11143,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-core/components/SendNext.js", function(exports, require, module){
 var SendNext, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -11225,8 +11230,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-core/components/Split.js", function(exports, require, module){
 var Split, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -11287,8 +11292,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-core/components/RunInterval.js", function(exports, require, module){
 var RunInterval, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -11376,8 +11381,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-core/components/RunTimeout.js", function(exports, require, module){
 var RunTimeout, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -11412,8 +11417,8 @@ RunTimeout = (function(_super) {
       }
     });
     this.inPorts.time.on('data', (function(_this) {
-      return function(time) {
-        _this.time = time;
+      return function(_at_time) {
+        _this.time = _at_time;
         return _this.startTimer();
       };
     })(this));
@@ -11471,8 +11476,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-core/components/MakeFunction.js", function(exports, require, module){
 var MakeFunction, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -11617,8 +11622,8 @@ module.exports = JSON.parse('{"name":"noflo-interaction","description":"User int
 require.register("noflo-noflo-interaction/components/ListenChange.js", function(exports, require, module){
 var ListenChange, noflo,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -11684,8 +11689,8 @@ exports.getComponent = function() {
 require.register("noflo-noflo-interaction/components/ListenDrag.js", function(exports, require, module){
 var ListenDrag, noflo,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -11761,8 +11766,8 @@ exports.getComponent = function() {
 require.register("noflo-noflo-interaction/components/ListenHash.js", function(exports, require, module){
 var ListenHash, noflo,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -11853,8 +11858,8 @@ exports.getComponent = function() {
 require.register("noflo-noflo-interaction/components/ListenKeyboard.js", function(exports, require, module){
 var ListenKeyboard, noflo,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -11931,8 +11936,8 @@ exports.getComponent = function() {
 require.register("noflo-noflo-interaction/components/ListenKeyboardShortcuts.js", function(exports, require, module){
 var ListenKeyboardShortcuts, noflo,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -12076,8 +12081,8 @@ exports.getComponent = function() {
 require.register("noflo-noflo-interaction/components/ListenMouse.js", function(exports, require, module){
 var ListenMouse, noflo,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -12176,8 +12181,8 @@ exports.getComponent = function() {
 require.register("noflo-noflo-interaction/components/ListenPointer.js", function(exports, require, module){
 var ListenPointer, noflo,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -12221,18 +12226,18 @@ ListenPointer = (function(_super) {
       };
     })(this));
     this.inPorts.action.on('data', (function(_this) {
-      return function(action) {
-        _this.action = action;
+      return function(_at_action) {
+        _this.action = _at_action;
       };
     })(this));
     this.inPorts.capture.on('data', (function(_this) {
-      return function(capture) {
-        _this.capture = capture;
+      return function(_at_capture) {
+        _this.capture = _at_capture;
       };
     })(this));
     this.inPorts.propagate.on('data', (function(_this) {
-      return function(propagate) {
-        _this.propagate = propagate;
+      return function(_at_propagate) {
+        _this.propagate = _at_propagate;
       };
     })(this));
   }
@@ -12357,8 +12362,8 @@ exports.getComponent = function() {
 require.register("noflo-noflo-interaction/components/ListenResize.js", function(exports, require, module){
 var ListenResize, noflo,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -12427,8 +12432,8 @@ exports.getComponent = function() {
 require.register("noflo-noflo-interaction/components/ListenScroll.js", function(exports, require, module){
 var ListenScroll, noflo,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -12511,8 +12516,8 @@ exports.getComponent = function() {
 require.register("noflo-noflo-interaction/components/ListenSpeech.js", function(exports, require, module){
 var ListenSpeech, noflo,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -12613,8 +12618,8 @@ exports.getComponent = function() {
 require.register("noflo-noflo-interaction/components/ListenTouch.js", function(exports, require, module){
 var ListenTouch, noflo,
   __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -12750,8 +12755,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-interaction/components/SetHash.js", function(exports, require, module){
 var SetHash, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -12797,8 +12802,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-interaction/components/ReadCoordinates.js", function(exports, require, module){
 var ReadCoordinates, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -12897,8 +12902,8 @@ exports.getComponent = function() {
 });
 require.register("noflo-noflo-interaction/components/ReadGamepad.js", function(exports, require, module){
 var ReadGamepad, noflo,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -12974,9 +12979,9 @@ protocols = {
 };
 
 BaseTransport = (function() {
-  function BaseTransport(options) {
+  function BaseTransport(_at_options) {
     var path;
-    this.options = options;
+    this.options = _at_options;
     if (!this.options) {
       this.options = {};
     }
@@ -13025,14 +13030,134 @@ BaseTransport = (function() {
 module.exports = BaseTransport;
 
 });
+require.register("noflo-noflo-runtime-base/src/direct.js", function(exports, require, module){
+var Base, DirectClient, DirectRuntime, EventEmitter, isBrowser,
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
+
+isBrowser = function() {
+  return !(typeof process !== 'undefined' && process.execPath && process.execPath.indexOf('node') !== -1);
+};
+
+Base = require('./Base');
+
+EventEmitter = require('events').EventEmitter;
+
+DirectRuntime = (function(_super) {
+  __extends(DirectRuntime, _super);
+
+  function DirectRuntime(options) {
+    DirectRuntime.__super__.constructor.call(this, options);
+    this.clients = [];
+  }
+
+  DirectRuntime.prototype._connect = function(client) {
+    this.clients.push(client);
+    return client.on('send', (function(_this) {
+      return function(msg) {
+        return _this._receive(msg, {
+          client: client
+        });
+      };
+    })(this));
+  };
+
+  DirectRuntime.prototype._disconnect = function(client) {
+    if (this.clients.indexOf(client) === -1) {
+      return;
+    }
+    this.clients.splice(this.clients.indexOf(client), 1);
+    return client.removeAllListeners('send');
+  };
+
+  DirectRuntime.prototype._receive = function(msg, context) {
+    return this.receive(msg.protocol, msg.command, msg.payload, context);
+  };
+
+  DirectRuntime.prototype.send = function(protocol, topic, payload, context) {
+    var m;
+    if (!context.client) {
+      return;
+    }
+    m = {
+      protocol: protocol,
+      command: topic,
+      payload: payload
+    };
+    return context.client._receive(m);
+  };
+
+  DirectRuntime.prototype.sendAll = function(protocol, topic, payload) {
+    var client, m, _i, _len, _ref, _results;
+    m = {
+      protocol: protocol,
+      command: topic,
+      payload: payload
+    };
+    _ref = this.clients;
+    _results = [];
+    for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+      client = _ref[_i];
+      _results.push(client._receive(m));
+    }
+    return _results;
+  };
+
+  return DirectRuntime;
+
+})(Base);
+
+DirectClient = (function(_super) {
+  __extends(DirectClient, _super);
+
+  function DirectClient(runtime, _at_name) {
+    this.name = _at_name;
+    DirectClient.__super__.constructor.call(this);
+    this.runtime = runtime;
+    if (!this.name) {
+      this.name = 'Unnamed client';
+    }
+  }
+
+  DirectClient.prototype.connect = function() {
+    return this.runtime._connect(this);
+  };
+
+  DirectClient.prototype.disconnect = function() {
+    return this.runtime._disconnect(this);
+  };
+
+  DirectClient.prototype.send = function(protocol, topic, payload) {
+    var m;
+    m = {
+      protocol: protocol,
+      command: topic,
+      payload: payload
+    };
+    return this.emit('send', m);
+  };
+
+  DirectClient.prototype._receive = function(message) {
+    return this.emit('message', message);
+  };
+
+  return DirectClient;
+
+})(EventEmitter);
+
+exports.Client = DirectClient;
+
+exports.Runtime = DirectRuntime;
+
+});
 require.register("noflo-noflo-runtime-base/src/protocol/Graph.js", function(exports, require, module){
 var GraphProtocol, noflo;
 
 noflo = require('noflo');
 
 GraphProtocol = (function() {
-  function GraphProtocol(transport) {
-    this.transport = transport;
+  function GraphProtocol(_at_transport) {
+    this.transport = _at_transport;
     this.graphs = {};
   }
 
@@ -13138,7 +13263,7 @@ GraphProtocol = (function() {
     if (payload.library) {
       payload.library = payload.library.replace('noflo-', '');
       graph.properties.library = payload.library;
-      fullName = "" + payload.library + "/" + fullName;
+      fullName = payload.library + "/" + fullName;
     }
     if (payload.icon) {
       graph.properties.icon = payload.icon;
@@ -13479,8 +13604,8 @@ module.exports = GraphProtocol;
 });
 require.register("noflo-noflo-runtime-base/src/protocol/Network.js", function(exports, require, module){
 var EventEmitter, NetworkProtocol, getConnectionSignature, getEdgeSignature, getPortSignature, getSocketSignature, noflo, prepareSocketEvent,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 noflo = require('noflo');
 
@@ -13561,8 +13686,8 @@ getSocketSignature = function(socket) {
 NetworkProtocol = (function(_super) {
   __extends(NetworkProtocol, _super);
 
-  function NetworkProtocol(transport) {
-    this.transport = transport;
+  function NetworkProtocol(_at_transport) {
+    this.transport = _at_transport;
     this.networks = {};
   }
 
@@ -13807,8 +13932,8 @@ _ = require('underscore');
 ComponentProtocol = (function() {
   ComponentProtocol.prototype.loaders = {};
 
-  function ComponentProtocol(transport) {
-    this.transport = transport;
+  function ComponentProtocol(_at_transport) {
+    this.transport = _at_transport;
   }
 
   ComponentProtocol.prototype.send = function(topic, payload, context) {
@@ -13997,8 +14122,8 @@ var RuntimeProtocol, noflo;
 noflo = require('noflo');
 
 RuntimeProtocol = (function() {
-  function RuntimeProtocol(transport) {
-    this.transport = transport;
+  function RuntimeProtocol(_at_transport) {
+    this.transport = _at_transport;
     this.mainGraph = null;
     this.outputSockets = {};
     this.transport.network.on('addnetwork', (function(_this) {
@@ -14196,6 +14321,9 @@ RuntimeProtocol = (function() {
     }
     graphName = this.mainGraph.name || this.mainGraph.properties.id;
     network = this.getMainNetwork();
+    if (!network) {
+      return this.send('error', new Error('No main network'), context);
+    }
     internal = this.mainGraph.inports[payload.port];
     component = network.processes[internal.process].component;
     socket = noflo.internalSocket.createSocket();
@@ -14480,8 +14608,8 @@ module.exports = JSON.parse('{"name":"noflo-runtime-webrtc","description":"WebRT
 });
 require.register("noflo-noflo-runtime-webrtc/runtime/network.js", function(exports, require, module){
 var Base, WebRTCRuntime, isBrowser, uuid,
-  __hasProp = {}.hasOwnProperty,
-  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+  __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
+  __hasProp = {}.hasOwnProperty;
 
 isBrowser = function() {
   return !(typeof process !== 'undefined' && process.execPath && process.execPath.indexOf('node') !== -1);
@@ -14620,10 +14748,10 @@ require.register("noflo-browser-app/index.js", function(exports, require, module
 
 });
 require.register("noflo-browser-app/graphs/main.json", function(exports, require, module){
-module.exports = JSON.parse('{"properties":{"name":"main","environment":{"type":"noflo-browser","content":"<button id=\'button\'>Go!</button>\\n<p id=\'message\'></p>"},"icon":""},"inports":{},"outports":{},"groups":[],"processes":{"dom/GetElement_7amk2":{"component":"dom/GetElement","metadata":{"label":"dom/GetElement","x":252,"y":180,"width":72,"height":72}},"core/Output_cg49":{"component":"core/Output","metadata":{"label":"core/Output","x":432,"y":360,"width":72,"height":72}},"dom/WriteHtml_fpz6j":{"component":"dom/WriteHtml","metadata":{"label":"dom/WriteHtml","x":684,"y":288,"width":72,"height":72}},"dom/GetElement_xvz54":{"component":"dom/GetElement","metadata":{"label":"dom/GetElement","x":252,"y":288,"width":72,"height":72}},"interaction/ListenMouse_1l373":{"component":"interaction/ListenMouse","metadata":{"label":"interaction/ListenMouse","x":432,"y":180,"width":72,"height":72}},"core/Kick_ey1nh":{"component":"core/Kick","metadata":{"label":"core/Kick","x":576,"y":180,"width":72,"height":72}}},"connections":[{"src":{"process":"dom/GetElement_xvz54","port":"element"},"tgt":{"process":"dom/WriteHtml_fpz6j","port":"container"},"metadata":{}},{"src":{"process":"dom/GetElement_7amk2","port":"element"},"tgt":{"process":"interaction/ListenMouse_1l373","port":"element"},"metadata":{"route":0}},{"src":{"process":"dom/GetElement_7amk2","port":"error"},"tgt":{"process":"core/Output_cg49","port":"in"},"metadata":{"route":1}},{"src":{"process":"dom/GetElement_xvz54","port":"error"},"tgt":{"process":"core/Output_cg49","port":"in"},"metadata":{"route":1}},{"src":{"process":"interaction/ListenMouse_1l373","port":"click"},"tgt":{"process":"core/Kick_ey1nh","port":"in"},"metadata":{}},{"src":{"process":"core/Kick_ey1nh","port":"out"},"tgt":{"process":"dom/WriteHtml_fpz6j","port":"html"},"metadata":{}},{"data":"#button","tgt":{"process":"dom/GetElement_7amk2","port":"selector"}},{"data":"#message","tgt":{"process":"dom/GetElement_xvz54","port":"selector"}},{"data":"Hello World!","tgt":{"process":"core/Kick_ey1nh","port":"data"}}]}');
+module.exports = JSON.parse('{"properties":{"name":"main","environment":{"type":"noflo-browser","content":"<p id=\\"output\\" style=\\"color: white\\">Hello</p>\\n<button id=\\"input\\">Click me</button>"},"icon":""},"inports":{},"outports":{},"groups":[],"processes":{"dom/GetElement_o0kjj":{"component":"dom/GetElement","metadata":{"label":"dom/GetElement","x":396,"y":180,"width":72,"height":72}},"dom/WriteHtml_15h3x":{"component":"dom/WriteHtml","metadata":{"label":"dom/WriteHtml","x":900,"y":72,"width":72,"height":72}},"core/Output_xjo09":{"component":"core/Output","metadata":{"label":"core/Output","x":1044,"y":252,"width":72,"height":72}},"dom/GetElement_323az":{"component":"dom/GetElement","metadata":{"label":"dom/GetElement","x":396,"y":0,"width":72,"height":72}},"interaction/ListenMouse_trqk9":{"component":"interaction/ListenMouse","metadata":{"label":"interaction/ListenMouse","x":576,"y":-72,"width":72,"height":72}},"core/Kick_ht3uo":{"component":"core/Kick","metadata":{"label":"core/Kick","x":756,"y":-72,"width":72,"height":72}}},"connections":[{"src":{"process":"dom/GetElement_o0kjj","port":"element"},"tgt":{"process":"dom/WriteHtml_15h3x","port":"container"},"metadata":{}},{"src":{"process":"dom/GetElement_o0kjj","port":"error"},"tgt":{"process":"core/Output_xjo09","port":"in"},"metadata":{"route":1}},{"src":{"process":"dom/WriteHtml_15h3x","port":"container"},"tgt":{"process":"core/Output_xjo09","port":"in"},"metadata":{}},{"src":{"process":"interaction/ListenMouse_trqk9","port":"click"},"tgt":{"process":"core/Kick_ht3uo","port":"in"},"metadata":{}},{"src":{"process":"dom/GetElement_323az","port":"error"},"tgt":{"process":"core/Output_xjo09","port":"in"},"metadata":{"route":1}},{"src":{"process":"core/Kick_ht3uo","port":"out"},"tgt":{"process":"dom/WriteHtml_15h3x","port":"html"},"metadata":{}},{"src":{"process":"dom/GetElement_323az","port":"element"},"tgt":{"process":"interaction/ListenMouse_trqk9","port":"element"},"metadata":{"route":null}},{"src":{"process":"core/Kick_ht3uo","port":"out"},"tgt":{"process":"core/Output_xjo09","port":"in"},"metadata":{"route":0}},{"data":"#output","tgt":{"process":"dom/GetElement_o0kjj","port":"selector"}},{"data":"#input","tgt":{"process":"dom/GetElement_323az","port":"selector"}},{"data":"Hello 3","tgt":{"process":"dom/WriteHtml_15h3x","port":"html"}}]}');
 });
 require.register("noflo-browser-app/graphs/main.json", function(exports, require, module){
-module.exports = JSON.parse('{"properties":{"name":"main","environment":{"type":"noflo-browser","content":"<button id=\'button\'>Go!</button>\\n<p id=\'message\'></p>"},"icon":""},"inports":{},"outports":{},"groups":[],"processes":{"dom/GetElement_7amk2":{"component":"dom/GetElement","metadata":{"label":"dom/GetElement","x":252,"y":180,"width":72,"height":72}},"core/Output_cg49":{"component":"core/Output","metadata":{"label":"core/Output","x":432,"y":360,"width":72,"height":72}},"dom/WriteHtml_fpz6j":{"component":"dom/WriteHtml","metadata":{"label":"dom/WriteHtml","x":684,"y":288,"width":72,"height":72}},"dom/GetElement_xvz54":{"component":"dom/GetElement","metadata":{"label":"dom/GetElement","x":252,"y":288,"width":72,"height":72}},"interaction/ListenMouse_1l373":{"component":"interaction/ListenMouse","metadata":{"label":"interaction/ListenMouse","x":432,"y":180,"width":72,"height":72}},"core/Kick_ey1nh":{"component":"core/Kick","metadata":{"label":"core/Kick","x":576,"y":180,"width":72,"height":72}}},"connections":[{"src":{"process":"dom/GetElement_xvz54","port":"element"},"tgt":{"process":"dom/WriteHtml_fpz6j","port":"container"},"metadata":{}},{"src":{"process":"dom/GetElement_7amk2","port":"element"},"tgt":{"process":"interaction/ListenMouse_1l373","port":"element"},"metadata":{"route":0}},{"src":{"process":"dom/GetElement_7amk2","port":"error"},"tgt":{"process":"core/Output_cg49","port":"in"},"metadata":{"route":1}},{"src":{"process":"dom/GetElement_xvz54","port":"error"},"tgt":{"process":"core/Output_cg49","port":"in"},"metadata":{"route":1}},{"src":{"process":"interaction/ListenMouse_1l373","port":"click"},"tgt":{"process":"core/Kick_ey1nh","port":"in"},"metadata":{}},{"src":{"process":"core/Kick_ey1nh","port":"out"},"tgt":{"process":"dom/WriteHtml_fpz6j","port":"html"},"metadata":{}},{"data":"#button","tgt":{"process":"dom/GetElement_7amk2","port":"selector"}},{"data":"#message","tgt":{"process":"dom/GetElement_xvz54","port":"selector"}},{"data":"Hello World!","tgt":{"process":"core/Kick_ey1nh","port":"data"}}]}');
+module.exports = JSON.parse('{"properties":{"name":"main","environment":{"type":"noflo-browser","content":"<p id=\\"output\\" style=\\"color: white\\">Hello</p>\\n<button id=\\"input\\">Click me</button>"},"icon":""},"inports":{},"outports":{},"groups":[],"processes":{"dom/GetElement_o0kjj":{"component":"dom/GetElement","metadata":{"label":"dom/GetElement","x":396,"y":180,"width":72,"height":72}},"dom/WriteHtml_15h3x":{"component":"dom/WriteHtml","metadata":{"label":"dom/WriteHtml","x":900,"y":72,"width":72,"height":72}},"core/Output_xjo09":{"component":"core/Output","metadata":{"label":"core/Output","x":1044,"y":252,"width":72,"height":72}},"dom/GetElement_323az":{"component":"dom/GetElement","metadata":{"label":"dom/GetElement","x":396,"y":0,"width":72,"height":72}},"interaction/ListenMouse_trqk9":{"component":"interaction/ListenMouse","metadata":{"label":"interaction/ListenMouse","x":576,"y":-72,"width":72,"height":72}},"core/Kick_ht3uo":{"component":"core/Kick","metadata":{"label":"core/Kick","x":756,"y":-72,"width":72,"height":72}}},"connections":[{"src":{"process":"dom/GetElement_o0kjj","port":"element"},"tgt":{"process":"dom/WriteHtml_15h3x","port":"container"},"metadata":{}},{"src":{"process":"dom/GetElement_o0kjj","port":"error"},"tgt":{"process":"core/Output_xjo09","port":"in"},"metadata":{"route":1}},{"src":{"process":"dom/WriteHtml_15h3x","port":"container"},"tgt":{"process":"core/Output_xjo09","port":"in"},"metadata":{}},{"src":{"process":"interaction/ListenMouse_trqk9","port":"click"},"tgt":{"process":"core/Kick_ht3uo","port":"in"},"metadata":{}},{"src":{"process":"dom/GetElement_323az","port":"error"},"tgt":{"process":"core/Output_xjo09","port":"in"},"metadata":{"route":1}},{"src":{"process":"core/Kick_ht3uo","port":"out"},"tgt":{"process":"dom/WriteHtml_15h3x","port":"html"},"metadata":{}},{"src":{"process":"dom/GetElement_323az","port":"element"},"tgt":{"process":"interaction/ListenMouse_trqk9","port":"element"},"metadata":{"route":null}},{"src":{"process":"core/Kick_ht3uo","port":"out"},"tgt":{"process":"core/Output_xjo09","port":"in"},"metadata":{"route":0}},{"data":"#output","tgt":{"process":"dom/GetElement_o0kjj","port":"selector"}},{"data":"#input","tgt":{"process":"dom/GetElement_323az","port":"selector"}},{"data":"Hello 3","tgt":{"process":"dom/WriteHtml_15h3x","port":"html"}}]}');
 });
 require.register("noflo-browser-app/component.json", function(exports, require, module){
 module.exports = JSON.parse('{"name":"noflo-browser-app","description":"The best project ever.","author":"Jon Nordby <jononor@gmail.com>","repo":"noflo/noflo-browser-app","version":"0.1.0","keywords":[],"dependencies":{"noflo/noflo":"*","noflo/noflo-dom":"*","noflo/noflo-core":"*","noflo/noflo-interaction":"*","noflo/noflo-runtime-webrtc":"*"},"remotes":["https://raw.githubusercontent.com"],"scripts":["index.js","components/DoSomething.js","graphs/main.json"],"json":["graphs/main.json","component.json"],"noflo":{"graphs":{"main":"graphs/main.json"},"components":{"DoSomething":"components/DoSomething.js"}}}');
@@ -15110,6 +15238,7 @@ require.alias("noflo-noflo-runtime-webrtc/runtime/network.js", "noflo-browser-ap
 require.alias("noflo-noflo-runtime-webrtc/runtime/network.js", "noflo-browser-app/deps/noflo-runtime-webrtc/index.js");
 require.alias("noflo-noflo-runtime-webrtc/runtime/network.js", "noflo-runtime-webrtc/index.js");
 require.alias("noflo-noflo-runtime-base/src/Base.js", "noflo-noflo-runtime-webrtc/deps/noflo-runtime-base/src/Base.js");
+require.alias("noflo-noflo-runtime-base/src/direct.js", "noflo-noflo-runtime-webrtc/deps/noflo-runtime-base/src/direct.js");
 require.alias("noflo-noflo-runtime-base/src/protocol/Graph.js", "noflo-noflo-runtime-webrtc/deps/noflo-runtime-base/src/protocol/Graph.js");
 require.alias("noflo-noflo-runtime-base/src/protocol/Network.js", "noflo-noflo-runtime-webrtc/deps/noflo-runtime-base/src/protocol/Network.js");
 require.alias("noflo-noflo-runtime-base/src/protocol/Component.js", "noflo-noflo-runtime-webrtc/deps/noflo-runtime-base/src/protocol/Component.js");
