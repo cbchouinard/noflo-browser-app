@@ -3,7 +3,7 @@
         "name": "main",
         "environment": {
             "type": "noflo-browser",
-            "content": "<p id=\"output\" style=\"color: white\">Hello</p>\n<button id=\"input\">Click me</button>"
+            "content": "<p id=\"output\">Hello</p>\n<button id=\"input\">Click me</button>"
         },
         "icon": ""
     },
@@ -188,6 +188,13 @@
             "tgt": {
                 "process": "dom/WriteHtml_15h3x",
                 "port": "html"
+            }
+        },
+        {
+            "data": "Hello 2",
+            "tgt": {
+                "process": "core/Kick_ht3uo",
+                "port": "data"
             }
         }
     ]
